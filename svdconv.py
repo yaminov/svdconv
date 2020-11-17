@@ -3,6 +3,7 @@
 import sys
 import xml.etree.ElementTree as et
 from itertools import groupby
+from copy import deepcopy
 
 svd_file_ext = sys.argv[1]
 svd_file     = svd_file_ext.split('.')[0].lower()
@@ -14,29 +15,31 @@ linker_file  = svd_file + '_mmr.ld'
 xml = et.parse(svd_file_ext)
 root = xml.getroot()
 
+dev_count = 0
+dev_dict  = {}
+dev_list  = []
+
 #*************************************************
 class TDevice:
-    name = ''
-    reg_list = []
     def __init__(self, name):
         self.name = name
         self.reg_list = []
 
 class TRegister:
-    def __init__(self, name, addr, size):
-        self.name = name
-        self.addr = addr
-        self.size = size
+    def __init__(self, name, offset, size):
+        self.name   = name
+        self.addr   = 0
+        self.offset = offset
+        self.size   = size
         self.fields = []
 
 #*************************************************
-def parse_register(register, base):
+def parse_register(register):
     reg_name   = register.find('name').text
     reg_offset = int(register.find('addressOffset').text, 0)
     reg_size   = int(register.find('size').text, 0)
-    reg_addr   = base + reg_offset
-
-    reg = TRegister(reg_name, reg_addr, reg_size)
+    
+    reg = TRegister(reg_name, reg_offset, reg_size)
  
     fields = register.findall('fields')
     if fields != []:
@@ -54,12 +57,10 @@ def parse_register(register, base):
     return reg
 
 #*************************************************
-dev_dict = {}
-dev_count = 0
-
 def parse_peripheral(device):
     global dev_list
     global dev_count
+    global dev_dict
 
     dev_name = device.find('name').text
     dev_base = int(device.find('baseAddress').text, 0)
@@ -72,15 +73,19 @@ def parse_peripheral(device):
         registers = device.findall('registers')
         registers_tree = registers[0].findall('register')
         for register in registers_tree:
-            result = parse_register(register, dev_base)
+            result = parse_register(register)
             dev.reg_list.append(result)
     else:
         parent = device.attrib['derivedFrom']
         i = dev_dict[parent]
-        dev.reg_list = dev_list[i].reg_list
+        dev.reg_list = deepcopy(dev_list[i].reg_list)
 
-    dev.reg_list.sort(key=lambda x: x.addr)
-    return dev
+    dev.reg_list.sort(key=lambda x: x.offset)
+    
+    for item in dev.reg_list:
+        item.addr = dev_base + item.offset
+
+    dev_list.append(dev)
 
 #*************************************************
 def fields2struct(reg):
@@ -155,11 +160,8 @@ def attributes(dev_name, reg_group):
 peripherals = root.findall('peripherals')
 peripherals_tree  = peripherals[0].findall('peripheral')
 
-dev_list = []
-
 for device in peripherals_tree:
-    result = parse_peripheral(device)
-    dev_list.append(result)
+    parse_peripheral(device)
 
 header_file_fd = open(header_file,'w')
 header_file_fd.write('#include <stdint.h>\n\n')
